@@ -2,6 +2,11 @@
 """
 어제의 박스오피스 (KOBIS 영화관입장권통합전산망 오픈 API 사용)
 
+[화면 구성]
+  탭1 📋 박스오피스  : 1위 영화 카드 + 관객수 상위 5편 그래프 + 전체 순위 표
+  탭2 🌡️ 상영관 온도 : 한 번 상영할 때 평균 몇 명이 봤는지(회차당 관객)로 '열기' 측정
+  탭3 🎰 룰렛       : 오늘 볼 영화를 랜덤으로 뽑아 주기
+
 [준비물]
 1) KOBIS 오픈 API 인증키
 2) 스트림릿 클라우드의 Settings → Secrets 에 아래 한 줄을 저장
@@ -10,6 +15,8 @@
 """
 
 import datetime as dt          # 날짜·시간 계산용 (파이썬 기본 제공)
+import random                  # 룰렛 애니메이션용 (파이썬 기본 제공)
+import time                    # 룰렛 애니메이션 잠깐 멈춤용 (파이썬 기본 제공)
 
 import altair as alt           # 막대그래프용 (스트림릿과 함께 설치됨)
 import pandas as pd            # 표 데이터 다루기
@@ -30,6 +37,17 @@ API_URL = (
 # 한국 표준시(UTC+9). 한국은 서머타임이 없어서 +9시간 고정으로 충분합니다.
 # 배포 서버의 시계는 한국 시간이 아니므로, 서버 시계를 그대로 쓰면 안 됩니다.
 KST = dt.timezone(dt.timedelta(hours=9))
+
+# 🌡️ 상영관 온도 기준 (회차당 관객 수). 재미용 기준이니 마음대로 바꿔 보세요!
+# (기준값 이상이면 해당 라벨, 위에서부터 차례로 검사합니다)
+TEMP_LEVELS = [
+    (100, "🔥 예매 전쟁"),
+    (50, "😊 훈훈함"),
+    (20, "🌤️ 보통"),
+    (0, "🧊 썰렁함"),
+]
+TEMP_LABEL_ORDER = [label for _, label in TEMP_LEVELS]
+TEMP_COLORS = ["#e4572e", "#f3a712", "#4c9f70", "#5b8def"]   # 위 라벨 순서와 같은 색
 
 
 class BoxOfficeError(Exception):
@@ -129,21 +147,39 @@ def fetch_box_office(api_key, target_dt):
 # ------------------------------------------------------------
 # 5. 응답을 보기 좋은 표(DataFrame)로 바꾸기
 # ------------------------------------------------------------
+def temp_label(per_show):
+    """회차당 관객 수를 '온도 라벨'(🔥/😊/🌤️/🧊)로 바꿔 줍니다."""
+    if pd.isna(per_show):
+        return "❔ 정보 없음"
+    for threshold, label in TEMP_LEVELS:
+        if per_show >= threshold:
+            return label
+    return TEMP_LEVELS[-1][1]
+
+
 def to_dataframe(movies):
     """API 는 숫자도 문자열로 주므로, 숫자 칸은 진짜 숫자로 바꿔 줍니다."""
     df = pd.DataFrame(movies)
 
     # 응답에 없는 칸이 있어도 에러가 나지 않게 빈 칸으로 채워 둠
-    for col in ["rank", "movieNm", "openDt", "audiCnt", "audiAcc", "scrnCnt"]:
+    for col in ["rank", "movieNm", "openDt", "audiCnt", "audiAcc", "scrnCnt", "showCnt"]:
         if col not in df.columns:
             df[col] = None
 
     # 문자열 → 숫자 (바꿀 수 없는 값은 빈 값으로 처리)
-    for col in ["rank", "audiCnt", "audiAcc", "scrnCnt"]:
+    audi = pd.to_numeric(df["audiCnt"], errors="coerce")
+    shows = pd.to_numeric(df["showCnt"], errors="coerce")
+
+    # 🌡️ 회차당 관객 = 관객수 ÷ 상영횟수  (상영횟수가 0이거나 없으면 계산하지 않음)
+    df["perShow"] = (audi / shows.where(shows > 0)).round(1)
+
+    for col in ["rank", "audiCnt", "audiAcc", "scrnCnt", "showCnt"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
     # 개봉일이 비어 있으면 '-' 로 표시
     df["openDt"] = df["openDt"].fillna("").astype(str).str.strip().replace("", "-")
+
+    df["온도"] = df["perShow"].apply(temp_label)
 
     df = df.rename(
         columns={
@@ -153,9 +189,14 @@ def to_dataframe(movies):
             "audiCnt": "관객수",
             "audiAcc": "누적관객",
             "scrnCnt": "스크린수",
+            "showCnt": "상영횟수",
+            "perShow": "회차당 관객",
         }
     )
-    columns = ["순위", "영화명", "개봉일", "관객수", "누적관객", "스크린수"]
+    columns = [
+        "순위", "영화명", "개봉일", "관객수", "누적관객",
+        "스크린수", "상영횟수", "회차당 관객", "온도",
+    ]
     return df[columns].sort_values("순위").reset_index(drop=True)
 
 
@@ -166,8 +207,15 @@ def fmt(value, unit=""):
     return f"{int(value):,}{unit}"
 
 
+def fmt_float(value, unit=""):
+    """소수 첫째 자리까지 보여 줍니다. 값이 없으면 '-'."""
+    if pd.isna(value):
+        return "-"
+    return f"{float(value):,.1f}{unit}"
+
+
 # ------------------------------------------------------------
-# 6. 화면 그리기
+# 6. 화면 그리기 - 머리말, 인증키 확인, 데이터 가져오기
 # ------------------------------------------------------------
 st.title("🎬 어제의 박스오피스")
 
@@ -223,45 +271,173 @@ except Exception:
 
 df = to_dataframe(movies)
 
-# (3) 1위 영화 - 지표 카드 세 장
-top = df.iloc[0]
-st.subheader("🥇 1위 영화")
-c1, c2, c3 = st.columns(3)
-c1.metric("영화명", str(top["영화명"]))
-c2.metric("어제 관객수", fmt(top["관객수"], "명"))
-c3.metric("누적 관객수", fmt(top["누적관객"], "명"))
+# 탭 세 개 만들기
+tab_board, tab_temp, tab_roulette = st.tabs(["📋 박스오피스", "🌡️ 상영관 온도", "🎰 오늘 볼 영화 룰렛"])
 
-# (4) 관객수 상위 5편 - 막대그래프
-st.subheader("📊 관객수 상위 5편")
-top5 = df.dropna(subset=["관객수"]).nlargest(5, "관객수").copy()
-top5["관객수"] = top5["관객수"].astype(int)    # 그래프용으로 일반 정수로 변환
+# ------------------------------------------------------------
+# 7. 탭1: 박스오피스 (1위 카드 + 상위 5편 그래프 + 전체 표)
+# ------------------------------------------------------------
+with tab_board:
+    # 1위 영화 - 지표 카드 세 장
+    top = df.iloc[0]
+    st.subheader("🥇 1위 영화")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("영화명", str(top["영화명"]))
+    c2.metric("어제 관객수", fmt(top["관객수"], "명"))
+    c3.metric("누적 관객수", fmt(top["누적관객"], "명"))
 
-if top5.empty:
-    st.info("관객수 정보가 없어 그래프를 그릴 수 없습니다.")
-else:
-    chart = (
-        alt.Chart(top5)
-        .mark_bar()
-        .encode(
-            x=alt.X("관객수:Q", title="관객수(명)"),
-            y=alt.Y("영화명:N", sort="-x", title=None),   # 관객수 많은 순서로 위에서부터
-            tooltip=["영화명", alt.Tooltip("관객수:Q", format=",")],
+    # 관객수 상위 5편 - 막대그래프
+    st.subheader("📊 관객수 상위 5편")
+    top5 = df.dropna(subset=["관객수"]).nlargest(5, "관객수").copy()
+    top5["관객수"] = top5["관객수"].astype(int)    # 그래프용으로 일반 정수로 변환
+
+    if top5.empty:
+        st.info("관객수 정보가 없어 그래프를 그릴 수 없습니다.")
+    else:
+        chart = (
+            alt.Chart(top5)
+            .mark_bar()
+            .encode(
+                x=alt.X("관객수:Q", title="관객수(명)"),
+                y=alt.Y("영화명:N", sort="-x", title=None),   # 관객수 많은 순서로 위에서부터
+                tooltip=["영화명", alt.Tooltip("관객수:Q", format=",")],
+            )
+            .properties(height=260)
         )
-        .properties(height=260)
-    )
-    st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart)
 
-# (5) 전체 순위 표
-st.subheader("📋 전체 순위")
-styled = df.style.format(
-    {
-        "순위": "{:,}",
-        "관객수": "{:,}",
-        "누적관객": "{:,}",
-        "스크린수": "{:,}",
-    },
-    na_rep="-",
-)
-st.dataframe(styled, hide_index=True, use_container_width=True)
+    # 전체 순위 표 (요청하신 6개 칸만 보여 줌)
+    st.subheader("📋 전체 순위")
+    board = df[["순위", "영화명", "개봉일", "관객수", "누적관객", "스크린수"]]
+    styled = board.style.format(
+        {"순위": "{:,}", "관객수": "{:,}", "누적관객": "{:,}", "스크린수": "{:,}"},
+        na_rep="-",
+    )
+    st.dataframe(styled, hide_index=True)
+
+# ------------------------------------------------------------
+# 8. 탭2: 🌡️ 상영관 온도 (회차당 평균 관객)
+# ------------------------------------------------------------
+with tab_temp:
+    st.subheader("🌡️ 상영관 온도")
+    st.write(
+        "스크린이 많은 영화는 관객도 당연히 많습니다. 그래서 **'한 번 상영할 때 평균 몇 명이 봤는가'** "
+        "(관객수 ÷ 상영횟수)로 진짜 열기를 재 봅니다."
+    )
+
+    temp_df = df.dropna(subset=["회차당 관객"]).copy()
+
+    if temp_df.empty:
+        st.info(
+            "상영횟수 정보가 없어 온도를 계산할 수 없습니다. "
+            "KOBIS 응답에 showCnt(상영횟수)가 들어 있는지 확인해 주세요."
+        )
+    else:
+        hottest = temp_df.loc[temp_df["회차당 관객"].idxmax()]
+        coldest = temp_df.loc[temp_df["회차당 관객"].idxmin()]
+
+        # 전체 평균은 '영화별 평균의 평균'이 아니라 (전체 관객 ÷ 전체 상영횟수)로 계산
+        total_audi = temp_df["관객수"].astype(float).sum()
+        total_show = temp_df["상영횟수"].astype(float).sum()
+        overall = total_audi / total_show if total_show > 0 else float("nan")
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("🔥 가장 뜨거운 영화", str(hottest["영화명"]),
+                  fmt_float(hottest["회차당 관객"], "명/회"), delta_color="off")
+        m2.metric("🧊 가장 썰렁한 영화", str(coldest["영화명"]),
+                  fmt_float(coldest["회차당 관객"], "명/회"), delta_color="off")
+        m3.metric("📽️ 목록 전체 평균", fmt_float(overall, "명/회"))
+
+        # 막대그래프 (온도 라벨별로 색을 다르게)
+        temp_chart = (
+            alt.Chart(temp_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("회차당 관객:Q", title="회차당 평균 관객(명)"),
+                y=alt.Y("영화명:N", sort="-x", title=None),
+                color=alt.Color(
+                    "온도:N",
+                    scale=alt.Scale(domain=TEMP_LABEL_ORDER, range=TEMP_COLORS),
+                    legend=alt.Legend(title="온도"),
+                ),
+                tooltip=[
+                    "영화명",
+                    alt.Tooltip("회차당 관객:Q", format=",.1f"),
+                    alt.Tooltip("관객수:Q", format=","),
+                    alt.Tooltip("상영횟수:Q", format=","),
+                    "온도",
+                ],
+            )
+            .properties(height=max(260, 32 * len(temp_df)))
+        )
+        st.altair_chart(temp_chart)
+
+        # 표
+        temp_table = temp_df[["순위", "영화명", "상영횟수", "관객수", "회차당 관객", "온도"]]
+        st.dataframe(
+            temp_table.style.format(
+                {"순위": "{:,}", "상영횟수": "{:,}", "관객수": "{:,}", "회차당 관객": "{:,.1f}"},
+                na_rep="-",
+            ),
+            hide_index=True,
+        )
+
+    # 기준표 안내
+    rule_lines = []
+    for i, (threshold, label) in enumerate(TEMP_LEVELS):
+        if i == 0:
+            rule_lines.append(f"{label}: {threshold}명 이상")
+        elif i == len(TEMP_LEVELS) - 1:
+            rule_lines.append(f"{label}: {TEMP_LEVELS[i - 1][0]}명 미만")
+        else:
+            rule_lines.append(f"{label}: {threshold}명 이상 ~ {TEMP_LEVELS[i - 1][0]}명 미만")
+    st.caption(
+        "온도 기준(재미용) → " + " · ".join(rule_lines)
+        + " / 좌석 수는 반영되지 않아 실제 '객석 점유율'과는 다릅니다."
+    )
+
+# ------------------------------------------------------------
+# 9. 탭3: 🎰 오늘 볼 영화 룰렛
+# ------------------------------------------------------------
+with tab_roulette:
+    st.subheader("🎰 오늘 볼 영화 룰렛")
+    st.write("고르기 귀찮을 때! 어제 순위 영화 중에서 하나를 랜덤으로 뽑아 드려요.")
+
+    # 뽑을 범위 선택 (전체 / 상위 5편 / 상위 3편)
+    scope = st.radio(
+        "뽑을 범위",
+        ["전체", "상위 5편", "상위 3편"],
+        horizontal=True,
+    )
+    if scope == "상위 5편":
+        pool = df.head(5)
+    elif scope == "상위 3편":
+        pool = df.head(3)
+    else:
+        pool = df
+
+    if st.button("🎲 룰렛 돌리기", type="primary"):
+        # 영화 이름이 빠르게 바뀌는 연출 (약 1.5초)
+        slot = st.empty()
+        names = pool["영화명"].astype(str).tolist()
+        for _ in range(12):
+            slot.markdown(f"### 🎰 {random.choice(names)}")
+            time.sleep(0.12)
+        slot.empty()
+
+        # 최종 당첨 영화를 session_state 에 저장 → 화면이 다시 그려져도 결과가 유지됨
+        st.session_state["roulette_pick"] = pool.sample(1).iloc[0].to_dict()
+        st.balloons()
+
+    pick = st.session_state.get("roulette_pick")
+    if pick:
+        st.success(f"🎉 오늘의 영화는  **{pick['영화명']}**  입니다!")
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("어제 순위", f"{fmt(pick['순위'])}위")
+        r2.metric("개봉일", str(pick["개봉일"]))
+        r3.metric("회차당 관객", fmt_float(pick["회차당 관객"], "명"))
+        r4.metric("상영관 온도", str(pick["온도"]))
+    else:
+        st.info("아직 뽑지 않았어요. 버튼을 눌러 보세요!")
 
 st.caption("출처: 영화진흥위원회(KOBIS) 오픈 API")
