@@ -15,6 +15,7 @@
 """
 
 import datetime as dt          # 날짜·시간 계산용 (파이썬 기본 제공)
+import html                    # 영화 제목을 HTML 에 안전하게 넣는 도구 (파이썬 기본 제공)
 import random                  # 룰렛 애니메이션용 (파이썬 기본 제공)
 import time                    # 룰렛 애니메이션 잠깐 멈춤용 (파이썬 기본 제공)
 
@@ -47,7 +48,111 @@ TEMP_LEVELS = [
     (0, "🧊 썰렁함"),
 ]
 TEMP_LABEL_ORDER = [label for _, label in TEMP_LEVELS]
-TEMP_COLORS = ["#e4572e", "#f3a712", "#4c9f70", "#5b8def"]   # 위 라벨 순서와 같은 색
+TEMP_COLORS = ["#B3263E", "#E0A526", "#5E9C76", "#5B7FA8"]   # 위 라벨 순서와 같은 색
+
+
+# ------------------------------------------------------------
+# 디자인: 극장 매표소 티켓 콘셉트
+#   색상 - 종이 #EEF1F6 / 잉크 #1E2A44 / 좌석 빨강 #B3263E / 황금 #E0A526
+#   글꼴 - 제목 Black Han Sans(포스터체), 본문 Noto Sans KR
+# ------------------------------------------------------------
+INK = "#1E2A44"
+ACCENT = "#B3263E"
+SOFT = "#8994AB"
+
+STYLE = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap');
+.stApp { font-family: 'Noto Sans KR', sans-serif; }
+.block-container { max-width: 1080px; padding-top: 2.5rem; }
+
+/* 머리말 */
+.mast-title { font-family: 'Black Han Sans', sans-serif; font-size: clamp(2.3rem, 7vw, 3.8rem);
+  line-height: 1.1; color: #1E2A44; }
+.mast-date { margin: .5rem 0 1.4rem; color: #5B6478; font-size: 1rem; }
+
+/* 소제목 */
+[data-testid="stHeading"] h3 { font-family: 'Black Han Sans', sans-serif; font-weight: 400;
+  font-size: 1.6rem; color: #1E2A44; margin-top: 1rem; }
+
+/* 탭 */
+.stTabs [data-baseweb="tab-list"] { gap: .4rem; border-bottom: 2px solid #D5DAE5; }
+.stTabs [data-baseweb="tab"] { font-weight: 700; padding: .6rem 1.1rem; }
+.stTabs [aria-selected="true"] { color: #B3263E; }
+.stTabs [data-baseweb="tab-highlight"] { background-color: #B3263E; height: 3px; }
+
+/* 지표 카드 */
+[data-testid="stMetric"] { background: #fff; border-radius: 12px; border-left: 5px solid #B3263E;
+  padding: 1rem 1.2rem; box-shadow: 0 2px 8px rgba(30,42,68,.08); }
+[data-testid="stMetricValue"] { font-weight: 700; }
+
+/* 버튼 */
+.stButton > button[kind="primary"] { background: #B3263E; border: none; border-radius: 999px;
+  padding: .65rem 1.8rem; font-weight: 700; }
+
+/* 티켓 */
+.ticket { display: flex; background: #fff; border-radius: 14px; margin: .6rem 0 1.4rem;
+  box-shadow: 0 1px 0 #D5DAE5; }
+.ticket-main { flex: 1; display: flex; align-items: center; gap: 1.6rem; padding: 1.8rem 2rem;
+  position: relative; min-width: 0; }
+.ticket-main::before, .ticket-main::after { content: ""; position: absolute; right: -12px;
+  width: 24px; height: 24px; border-radius: 50%; background: #EEF1F6; z-index: 2; }
+.ticket-main::before { top: -12px; }
+.ticket-main::after { bottom: -12px; }
+.t-rank { font-family: 'Black Han Sans', sans-serif; font-size: 5.5rem; line-height: 1; color: #B3263E; }
+.t-rank small { font-size: 1.3rem; color: #1E2A44; margin-left: .15rem; }
+.t-title { font-family: 'Black Han Sans', sans-serif; font-size: clamp(1.5rem, 4vw, 2.2rem);
+  line-height: 1.2; color: #1E2A44; word-break: keep-all; }
+.t-sub { margin-top: .4rem; color: #5B6478; }
+.ticket-stub { background: #B3263E; color: #fff; border-radius: 0 14px 14px 0; padding: 1.6rem 2rem;
+  min-width: 230px; display: flex; flex-direction: column; justify-content: center; gap: 1rem;
+  border-left: 2px dashed rgba(255,255,255,.6); }
+.t-stat span { display: block; font-size: .85rem; opacity: .85; }
+.t-stat b { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  .ticket { flex-direction: column; }
+  .ticket-main { padding: 1.4rem 1.3rem; gap: 1rem; }
+  .ticket-main::before, .ticket-main::after { top: auto; bottom: -12px; }
+  .ticket-main::before { left: -12px; right: auto; }
+  .ticket-main::after { right: -12px; }
+  .t-rank { font-size: 3.6rem; }
+  .ticket-stub { border-radius: 0 0 14px 14px; border-left: none; min-width: 0;
+    border-top: 2px dashed rgba(255,255,255,.6); flex-direction: row; justify-content: space-between; }
+}
+
+/* 룰렛 돌아가는 글자 */
+.spin { font-family: 'Black Han Sans', sans-serif; font-size: 2rem; color: #B3263E;
+  text-align: center; padding: 1.2rem 0; }
+</style>
+"""
+
+
+def ticket_html(rank, title, sub, stats):
+    """티켓 모양 카드(HTML)를 만듭니다. 영화 제목 등은 html.escape 로 안전하게 처리."""
+    rows = "".join(
+        f'<div class="t-stat"><span>{html.escape(label)}</span><b>{html.escape(value)}</b></div>'
+        for label, value in stats
+    )
+    # ※ 마크다운이 코드로 오해하지 않도록 줄 앞 들여쓰기 없이 한 덩어리로 이어 붙입니다.
+    return (
+        f'<div class="ticket"><div class="ticket-main">'
+        f'<div class="t-rank">{html.escape(rank)}<small>위</small></div>'
+        f'<div><div class="t-title">{html.escape(title)}</div>'
+        f'<div class="t-sub">{html.escape(sub)}</div></div></div>'
+        f'<div class="ticket-stub">{rows}</div></div>'
+    )
+
+
+def style_chart(chart):
+    """그래프 공통 디자인: 테두리 없이, 둥근 막대, 옅은 격자선."""
+    return (
+        chart.configure_view(strokeWidth=0)
+        .configure_bar(cornerRadiusEnd=4)
+        .configure_axis(labelFont="Noto Sans KR", labelFontSize=13, labelColor=INK,
+                        titleFont="Noto Sans KR", titleColor=SOFT,
+                        gridColor="#D9DEE9", domain=False, ticks=False)
+        .configure_legend(labelFont="Noto Sans KR", titleFont="Noto Sans KR", labelFontSize=12)
+    )
 
 
 class BoxOfficeError(Exception):
@@ -217,11 +322,16 @@ def fmt_float(value, unit=""):
 # ------------------------------------------------------------
 # 6. 화면 그리기 - 머리말, 인증키 확인, 데이터 가져오기
 # ------------------------------------------------------------
-st.title("🎬 어제의 박스오피스")
+st.markdown(STYLE, unsafe_allow_html=True)   # 위에서 만든 디자인(CSS) 적용
 
 yesterday = get_yesterday_kst()
 target_dt = yesterday.strftime("%Y%m%d")     # 예: 20260920 (yyyymmdd 여덟 자리)
-st.caption(f"조회 기준일: {yesterday.strftime('%Y년 %m월 %d일')} (한국 시간 기준 어제)")
+WEEKDAYS = "월화수목금토일"
+st.markdown(
+    '<div class="masthead"><div class="mast-title">어제의 박스오피스</div>'
+    f'<div class="mast-date">{yesterday.strftime("%Y년 %m월 %d일")} {WEEKDAYS[yesterday.weekday()]}요일 (한국 시간 기준)</div></div>',
+    unsafe_allow_html=True,
+)
 
 # (1) 인증키 확인
 api_key = load_api_key()
@@ -272,7 +382,7 @@ except Exception:
 df = to_dataframe(movies)
 
 # 탭 세 개 만들기
-tab_board, tab_temp, tab_roulette = st.tabs(["📋 박스오피스", "🌡️ 상영관 온도", "🎰 오늘 볼 영화 룰렛"])
+tab_board, tab_temp, tab_roulette = st.tabs(["박스오피스", "상영관 온도", "오늘 볼 영화 룰렛"])
 
 # ------------------------------------------------------------
 # 7. 탭1: 박스오피스 (1위 카드 + 상위 5편 그래프 + 전체 표)
@@ -280,14 +390,17 @@ tab_board, tab_temp, tab_roulette = st.tabs(["📋 박스오피스", "🌡️ �
 with tab_board:
     # 1위 영화 - 지표 카드 세 장
     top = df.iloc[0]
-    st.subheader("🥇 1위 영화")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("영화명", str(top["영화명"]))
-    c2.metric("어제 관객수", fmt(top["관객수"], "명"))
-    c3.metric("누적 관객수", fmt(top["누적관객"], "명"))
+    st.subheader("어제의 1위")
+    st.markdown(
+        ticket_html(
+            fmt(top["순위"]), str(top["영화명"]), f"개봉일 {top['개봉일']}",
+            [("어제 관객수", fmt(top["관객수"], "명")), ("누적 관객수", fmt(top["누적관객"], "명"))],
+        ),
+        unsafe_allow_html=True,
+    )
 
     # 관객수 상위 5편 - 막대그래프
-    st.subheader("📊 관객수 상위 5편")
+    st.subheader("관객수 상위 5편")
     top5 = df.dropna(subset=["관객수"]).nlargest(5, "관객수").copy()
     top5["관객수"] = top5["관객수"].astype(int)    # 그래프용으로 일반 정수로 변환
 
@@ -300,14 +413,15 @@ with tab_board:
             .encode(
                 x=alt.X("관객수:Q", title="관객수(명)"),
                 y=alt.Y("영화명:N", sort="-x", title=None),   # 관객수 많은 순서로 위에서부터
+                color=alt.condition(alt.datum["순위"] == 1, alt.value(ACCENT), alt.value(INK)),
                 tooltip=["영화명", alt.Tooltip("관객수:Q", format=",")],
             )
             .properties(height=260)
         )
-        st.altair_chart(chart)
+        st.altair_chart(style_chart(chart))
 
     # 전체 순위 표 (요청하신 6개 칸만 보여 줌)
-    st.subheader("📋 전체 순위")
+    st.subheader("전체 순위")
     board = df[["순위", "영화명", "개봉일", "관객수", "누적관객", "스크린수"]]
     styled = board.style.format(
         {"순위": "{:,}", "관객수": "{:,}", "누적관객": "{:,}", "스크린수": "{:,}"},
@@ -319,7 +433,7 @@ with tab_board:
 # 8. 탭2: 🌡️ 상영관 온도 (회차당 평균 관객)
 # ------------------------------------------------------------
 with tab_temp:
-    st.subheader("🌡️ 상영관 온도")
+    st.subheader("상영관 온도")
     st.write(
         "스크린이 많은 영화는 관객도 당연히 많습니다. 그래서 **'한 번 상영할 때 평균 몇 명이 봤는가'** "
         "(관객수 ÷ 상영횟수)로 진짜 열기를 재 봅니다."
@@ -370,7 +484,7 @@ with tab_temp:
             )
             .properties(height=max(260, 32 * len(temp_df)))
         )
-        st.altair_chart(temp_chart)
+        st.altair_chart(style_chart(temp_chart))
 
         # 표
         temp_table = temp_df[["순위", "영화명", "상영횟수", "관객수", "회차당 관객", "온도"]]
@@ -400,7 +514,7 @@ with tab_temp:
 # 9. 탭3: 🎰 오늘 볼 영화 룰렛
 # ------------------------------------------------------------
 with tab_roulette:
-    st.subheader("🎰 오늘 볼 영화 룰렛")
+    st.subheader("오늘 볼 영화 룰렛")
     st.write("고르기 귀찮을 때! 어제 순위 영화 중에서 하나를 랜덤으로 뽑아 드려요.")
 
     # 뽑을 범위 선택 (전체 / 상위 5편 / 상위 3편)
@@ -421,7 +535,7 @@ with tab_roulette:
         slot = st.empty()
         names = pool["영화명"].astype(str).tolist()
         for _ in range(12):
-            slot.markdown(f"### 🎰 {random.choice(names)}")
+            slot.markdown(f'<div class="spin">{html.escape(random.choice(names))}</div>', unsafe_allow_html=True)
             time.sleep(0.12)
         slot.empty()
 
@@ -431,12 +545,13 @@ with tab_roulette:
 
     pick = st.session_state.get("roulette_pick")
     if pick:
-        st.success(f"🎉 오늘의 영화는  **{pick['영화명']}**  입니다!")
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("어제 순위", f"{fmt(pick['순위'])}위")
-        r2.metric("개봉일", str(pick["개봉일"]))
-        r3.metric("회차당 관객", fmt_float(pick["회차당 관객"], "명"))
-        r4.metric("상영관 온도", str(pick["온도"]))
+        st.markdown(
+            ticket_html(
+                fmt(pick["순위"]), str(pick["영화명"]), f"개봉일 {pick['개봉일']}",
+                [("회차당 관객", fmt_float(pick["회차당 관객"], "명")), ("상영관 온도", str(pick["온도"]))],
+            ),
+            unsafe_allow_html=True,
+        )
     else:
         st.info("아직 뽑지 않았어요. 버튼을 눌러 보세요!")
 
