@@ -445,3 +445,4 @@ if user_input:
         st.session_state.chat_messages.append({"role": "assistant", "content": full_answer})
 
     st.rerun()
+
