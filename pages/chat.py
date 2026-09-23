@@ -322,47 +322,49 @@ for i, msg in enumerate(messages):
         st.markdown(msg["content"])
 
         if msg["role"] == "assistant":
-            # 글자 수 표시
-            st.caption(f"✏️ 글자 수: {len(msg['content'])}자")
+            # 부가 기능들은 평소엔 접어 두고, 필요할 때만 펼쳐서 쓰도록 묶어둡니다.
+            with st.expander("🔧 더보기"):
+                # 글자 수 표시
+                st.caption(f"✏️ 글자 수: {len(msg['content'])}자")
 
-            # 복사용 텍스트 (코드 상자에는 복사 아이콘이 자동으로 붙어요)
-            with st.expander("📋 복사용 텍스트 보기"):
+                # 복사용 텍스트 (코드 상자에는 복사 아이콘이 자동으로 붙어요)
+                st.caption("📋 복사용 텍스트")
                 st.code(msg["content"], language=None)
 
-            # 어려운 단어(**로 감싸진 단어) 뜻 물어보기 버튼들
-            terms = re.findall(r"\*\*(.+?)\*\*", msg["content"])
-            if terms:
-                st.caption("🔍 어려운 단어 뜻 물어보기")
-                term_cols = st.columns(min(len(terms), 4))
-                for j, term in enumerate(terms):
-                    col = term_cols[j % len(term_cols)]
-                    col.button(term, key=f"term_{i}_{j}", on_click=explain_term, args=(term,))
+                # 어려운 단어(**로 감싸진 단어) 뜻 물어보기 버튼들
+                terms = re.findall(r"\*\*(.+?)\*\*", msg["content"])
+                if terms:
+                    st.caption("🔍 어려운 단어 뜻 물어보기")
+                    term_cols = st.columns(min(len(terms), 4))
+                    for j, term in enumerate(terms):
+                        col = term_cols[j % len(term_cols)]
+                        col.button(term, key=f"term_{i}_{j}", on_click=explain_term, args=(term,))
 
-            # 퀴즈 만들기 버튼
-            st.button(
-                "🧩 이 설명으로 퀴즈 만들기",
-                key=f"quiz_{i}",
-                on_click=make_quiz_from,
-                args=(msg["content"],),
-            )
+                # 퀴즈 만들기 버튼
+                st.button(
+                    "🧩 이 설명으로 퀴즈 만들기",
+                    key=f"quiz_{i}",
+                    on_click=make_quiz_from,
+                    args=(msg["content"],),
+                )
 
-            # 이해도 확인 버튼 (가장 최근 답변에만 붙임)
-            if i == last_assistant_index:
-                c1, c2 = st.columns(2)
-                c1.button(
-                    "😊 이해했어요",
-                    key=f"got_it_{i}",
-                    on_click=set_pending_text,
-                    args=("이해했어요, 고마워요!",),
-                    use_container_width=True,
-                )
-                c2.button(
-                    "🤔 더 쉽게 설명해줘",
-                    key=f"easier_{i}",
-                    on_click=set_pending_text,
-                    args=("방금 설명을 더 쉽게 다시 설명해줘.",),
-                    use_container_width=True,
-                )
+                # 이해도 확인 버튼 (가장 최근 답변에만 붙임)
+                if i == last_assistant_index:
+                    c1, c2 = st.columns(2)
+                    c1.button(
+                        "😊 이해했어요",
+                        key=f"got_it_{i}",
+                        on_click=set_pending_text,
+                        args=("이해했어요, 고마워요!",),
+                        use_container_width=True,
+                    )
+                    c2.button(
+                        "🤔 더 쉽게 설명해줘",
+                        key=f"easier_{i}",
+                        on_click=set_pending_text,
+                        args=("방금 설명을 더 쉽게 다시 설명해줘.",),
+                        use_container_width=True,
+                    )
 
 # 이전에 실패했던 질문이 있다면, 다시 시도할 수 있는 버튼을 보여줍니다.
 if st.session_state.last_failed_input:
